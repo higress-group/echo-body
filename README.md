@@ -1,17 +1,19 @@
 # echo-body
 A test image for checking http body in e2e test suites.
 
-功能：
+**将收到的request body放进response body中返回，request与response的ContentType保持一致，目前支持"application/json"，"application/x-www-form-urlencoded"，"multipart/form-data", "text/plain"**
 
-1. 支持response body附带ingress信息，header中设置`X-Echo-Ingress-Info`为`false`可关闭
-2. 支持response body附带自定义数据，header中通过`X-Echo-Set-Body`字段进行设置
+**其他功能：**
 
-使用：
+1. 支持response body附带ingress信息，header中设置`X-Echo-Ingress-Info`为`true`可开启，（ContentType需为application/json，application/x-www-form-urlencoded或multipart/form-data
+2. 支持response body附带自定义数据，header中通过`X-Echo-Set-Body`字段进行设置，（ContentType需为application/json，application/x-www-form-urlencoded或multipart/form-data
+
+**使用：**
 
 1. echo-body镜像构建
 
 ```bash
-docker build -t <your_registry_hub>/echo-body:1.2.0 -f ./Dockerfile .
+docker build -t <your_registry_hub>/echo-body:1.5.0 -f ./Dockerfile .
 ```
 2. k8s中容器部署
 
@@ -154,6 +156,6 @@ xxx@xxx:~/echo-body$ curl -v  http:/0.0.0.0:3000 -H "Content-type: application/j
 4. 测试
 见测试代码
 
-TODO:
+**备注：**
 1. 支持多种类型body，如"application/json"（已支持），"application/x-www-form-urlencoded"，"multipart/form-data"
 2. 目前只测试了body为两层嵌套的情况，即`map[string][]string`，更多层嵌套的情况暂未测试

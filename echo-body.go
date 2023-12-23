@@ -90,6 +90,7 @@ const (
 	ContentTypeApplicationJson = "application/json"
 	ContentTypeFormUrlencoded  = "application/x-www-form-urlencoded"
 	ContentTypeMultipartForm   = "multipart/form-data"
+	ContextTypeTextPlain       = "text/plain"
 )
 
 func main() {
@@ -163,73 +164,79 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 func echoHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("Echoing back request body made to %s to client (%s)\n", r.RequestURI, r.RemoteAddr)
 
-	contentType := r.Header.Get("content-type")
+	contentType := r.Header.Get("Content-Type")
 	if len(contentType) == 0 {
-		processError(w, fmt.Errorf("content-type is not specified"), http.StatusBadRequest)
-		return
-	}
-	if contentType != ContentTypeApplicationJson {
-		processError(w, fmt.Errorf("content-type invalid or not support: %q", contentType), http.StatusBadRequest)
+		processError(w, fmt.Errorf("Content-Type is not specified"), http.StatusBadRequest)
 		return
 	}
 
-	resBodyInJson, err := io.ReadAll(r.Body)
+	reqBodyInBytes, err := io.ReadAll(r.Body)
+	var respBodyInBytes []byte
 	if err != nil {
-		fmt.Errorf("content-type invalid or not support: %q", contentType)
+		fmt.Errorf("Content-Type invalid or not support: %q", contentType)
 		processError(w, err, http.StatusInternalServerError)
 		return
 	}
+	switch contentType {
+	case ContextTypeTextPlain:
+		respBodyInBytes = reqBodyInBytes[:]
+		fmt.Printf("Echoing back %s",string(respBodyInBytes))
+	case ContentTypeApplicationJson, ContentTypeFormUrlencoded, ContentTypeMultipartForm:
+		respBody := make(map[string]interface{})
+		if len(reqBodyInBytes) > 0 {
+			err = json.Unmarshal(reqBodyInBytes, &respBody)
+			if err != nil {
+				processError(w, fmt.Errorf("body unmarshall fail, please check your body format: %q", err.Error()), http.StatusBadRequest)
+				return
+			}
+		}
+		
+		// body中默认不带ingress信息
+		if echoIngressInfo, ok := r.Header["X-Echo-Ingress-Info"]; ok && echoIngressInfo[0] == "true" {
+			writeIngressInfo(w, respBody)
+		}
 
-	resBody := make(map[string]interface{})
-
-	if len(resBodyInJson) > 0 {
-		err = json.Unmarshal(resBodyInJson, &resBody)
+		// 追加自定义数据
+		if _, ok := r.Header["X-Echo-Set-Body"]; ok {
+			writeEchoResponseBody(w, r.Header, respBody)
+		}
+		respBodyInBytes, err = json.MarshalIndent(respBody, "", " ")
 		if err != nil {
 			processError(w, err, http.StatusInternalServerError)
 			return
 		}
-	}
-
-	// body中默认带ingress信息
-	if echoIngressInfo, ok := r.Header["X-Echo-Ingress-Info"]; !ok || echoIngressInfo[0] == "true" {
-		writeIngressInfo(w, resBody)
-	}
-
-	writeEchoResponseBody(w, r.Header, resBody)
-
-	js, err := json.MarshalIndent(resBody, "", " ")
-	if err != nil {
-		processError(w, err, http.StatusInternalServerError)
+	default:
+		processError(w, fmt.Errorf("Content-Type invalid or not support: %q", contentType), http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Write(js)
+	w.Write(respBodyInBytes)
 }
 
 // 将ingress信息追加至response body中
-func writeIngressInfo(w http.ResponseWriter, resBody map[string]interface{}) {
-	if _, ok := resBody["namespace"]; !ok {
-		resBody["namespace"] = context.Namespace
+func writeIngressInfo(w http.ResponseWriter, respBody map[string]interface{}) {
+	if _, ok := respBody["namespace"]; !ok {
+		respBody["namespace"] = context.Namespace
 	} else {
 		processError(w, fmt.Errorf("namespace field already used in body. If you want to close this warning, please set X-Echo-Ingress-Info to be false."), http.StatusBadRequest)
 		return
 	}
-	if _, ok := resBody["ingress"]; !ok {
-		resBody["ingress"] = context.Ingress
+	if _, ok := respBody["ingress"]; !ok {
+		respBody["ingress"] = context.Ingress
 	} else {
 		processError(w, fmt.Errorf("ingress field already used in body. If you want to close this warning, please set X-Echo-Ingress-Info to be false."), http.StatusBadRequest)
 		return
 	}
-	if _, ok := resBody["service"]; !ok {
-		resBody["service"] = context.Service
+	if _, ok := respBody["service"]; !ok {
+		respBody["service"] = context.Service
 	} else {
 		processError(w, fmt.Errorf("service field already used in body. If you want to close this warning, please set X-Echo-Ingress-Info to be false."), http.StatusBadRequest)
 		return
 	}
-	if _, ok := resBody["pod"]; !ok {
-		resBody["pod"] = context.Pod
+	if _, ok := respBody["pod"]; !ok {
+		respBody["pod"] = context.Pod
 	} else {
 		processError(w, fmt.Errorf("pod field already used in body. If you want to close this warning, please set X-Echo-Ingress-Info to be false."), http.StatusBadRequest)
 		return
@@ -237,18 +244,18 @@ func writeIngressInfo(w http.ResponseWriter, resBody map[string]interface{}) {
 }
 
 // 将request header["X-Echo-Set-Body"]中的内容追加至response body中
-func writeEchoResponseBody(w http.ResponseWriter, headers http.Header, resBody map[string]interface{}) {
-	kvs:=make(map[string][]string)
+func writeEchoResponseBody(w http.ResponseWriter, headers http.Header, respBody map[string]interface{}) {
+	kvs := make(map[string][]string)
 	for _, bodyKVList := range headers["X-Echo-Set-Body"] {
 		bodyKVs := strings.Split(bodyKVList, ",")
 		for _, bodyKV := range bodyKVs {
 			name, value, _ := strings.Cut(strings.TrimSpace(bodyKV), ":")
-				kvs[name] = append(kvs[name], string(value))
+			kvs[name] = append(kvs[name], string(value))
 		}
 	}
 	for key, vs := range kvs {
-		if _, ok := resBody[key]; !ok {
-			resBody[key] = vs
+		if _, ok := respBody[key]; !ok {
+			respBody[key] = vs
 		}
 	}
 }
